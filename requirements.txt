@@ -1,0 +1,11 @@
+# Everything installs from pip with no compiler and no admin rights.
+numpy>=1.23
+pandas>=1.5
+scipy>=1.9
+matplotlib>=3.5
+odfpy>=1.4          # only needed to read .ods intron lists
+
+# Optional. Fallback BAM engine, e.g. for a .csi index. Measured to
+# under-count coverage for reads with long splice junctions, so the bundled
+# pure-Python engine (fastbam) is the default.
+# bamnostic>=1.3

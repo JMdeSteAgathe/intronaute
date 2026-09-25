@@ -1,0 +1,11 @@
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+build/
+dist/
+results/
+annotation/targets.tsv*
+samplesheet.tsv
+.ipynb_checkpoints/

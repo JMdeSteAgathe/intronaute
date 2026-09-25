@@ -1,0 +1,21 @@
+{
+  "_comment": "Every flag of every subcommand can live here. Command-line flags win.",
+  "introns": "examples/example_introns.bed",
+  "gtf": "/data/annotation/gencode.v50.basic.annotation.gtf.gz",
+  "targets": "annotation/targets.tsv.gz",
+  "samplesheet": "samplesheet.tsv",
+  "outdir": "results",
+
+  "bam_dir": [
+    "/data/rnaseq/run_2025_01/BAM",
+    "/data/rnaseq/run_2025_02/BAM"
+  ],
+
+  "workers": 8,
+  "min_mapq": 10,
+  "library": "auto",
+  "min_exon_depth": 8.0,
+  "min_frac_measurable": 0.5,
+  "z_threshold": 3.0,
+  "min_delta": 0.5
+}
