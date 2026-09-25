@@ -1,4 +1,4 @@
-# Intronaute
+# intronaute
 
 Detect **minor-intron (U12) retention** across a cohort of RNA-seq BAM files.
 
