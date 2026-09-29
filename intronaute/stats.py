@@ -34,6 +34,28 @@ Measurement chain
      - stouffer    : sum(z)/sqrt(n), sensitive to a small but coordinated shift
      - MSRI        : winsorised mean of z(minor) minus that of z(control)
 
+Junction measure (optional, `--hit-mode`)
+-----------------------------------------
+Coverage alone has two weaknesses: in exon-capture libraries the probes barely
+reach the intron body, and in noisy samples intronic coverage can rise with no
+retention at all (reads piling up mid-intron without touching either splice
+site). The junction measure only looks at the two splice sites:
+
+    EI = reads crossing the donor + reads crossing the acceptor (unspliced,
+         >= min_overhang bp on each side of the boundary)
+    S  = spliced reads using the donor + spliced reads using the acceptor
+         (the exact junction counts at both sites, plus alternative partners)
+    theta = EI / (EI + S)                 -- FRASER's theta, pooled over both sites
+    y_J   = log2((EI + a) / (S + a))      -- same scale as y, measurable when
+                                             EI + S >= min_junction_reads
+
+y_J then goes through exactly the same chain as y: control-intron offset,
+robust z, effect-size guard. The two z are combined per intron as
+    z_comb = (z_cov + z_J) / sqrt(2 + 2 rho)
+where rho is their correlation measured on the CONTROL introns of the cohort,
+so z_comb stays on the same scale as a single z under the null. When only one
+measure is available for a cell, z_comb falls back to that one.
+
 Memory: matrices are held as float32 numpy arrays, never as a long-format
 DataFrame, so a cohort of several thousand BAMs stays around a few hundred MB.
 """
@@ -53,6 +75,16 @@ DETAIL_COLS = ["target_id", "intron_depth_mean", "exon_depth_mean",
                "n_alt_acceptor", "intron_frac_cov"]
 
 
+JUNC_COLS = ["n_EE", "n_EI_left", "n_EI_right", "n_alt_donor", "n_alt_acceptor"]
+HIT_MODES = ("coverage", "junction", "combined", "both")
+# MAD floor quantile for the junction z. The coverage floor (0.2) is fine for
+# coverage, whose MAD mostly reflects biology. Junction MADs are dominated by
+# counting noise, which shrinks with depth: a floor taken at the 20th
+# percentile comes from shallow introns and caps the z of well-covered ones.
+# Measured on simulation: sensitivity 0.04 at 0.2, 0.19 at 0.05, no gain below.
+JUNCTION_MAD_FLOOR_Q = 0.05
+
+
 def counts_path(counts_dir: str, sample: str) -> str:
     return os.path.join(counts_dir, f"{sample}.tsv.gz")
 
@@ -63,36 +95,68 @@ def load_meta(targets_tsv: str) -> pd.DataFrame:
     return m.set_index("target_id")
 
 
-def load_matrix(counts_dir: str, samples: Sequence[str],
-                progress: int = 250) -> Tuple[np.ndarray, np.ndarray, List[str],
-                                              List[str]]:
-    """Read every sample's counts into two float32 matrices.
+class Counts:
+    """Per-sample x per-target float32 matrices read from the counts cache."""
 
-    Returns (intron_depth, exon_depth, target_ids, samples_found).
+    def __init__(self, intron, exon, ei, split, target_ids, samples):
+        self.intron, self.exon = intron, exon
+        self.ei, self.split = ei, split          # None if the cache lacks them
+        self.target_ids, self.samples = target_ids, samples
+
+
+def load_counts(counts_dir: str, samples: Sequence[str], junctions: bool = True,
+                progress: int = 250) -> Counts:
+    """Read every sample's counts.
+
+    With `junctions`, also build two junction matrices:
+      ei    = n_EI_left + n_EI_right                       (unspliced, crossing)
+      split = 2 * n_EE + n_alt_donor + n_alt_acceptor      (spliced, per site)
+    i.e. per splice site, the reads that do not splice vs those that do, summed
+    over the two sites of the intron.
     """
     ref_ids: Optional[List[str]] = None
-    rows_i: List[np.ndarray] = []
-    rows_e: List[np.ndarray] = []
+    rows = {k: [] for k in ("i", "e", "ei", "sp")}
     found: List[str] = []
+    want = list(NUM_COLS) + (JUNC_COLS if junctions else [])
+    have_junc = junctions
     for k, s in enumerate(samples):
         p = counts_path(counts_dir, s)
         if not os.path.exists(p):
             continue
-        d = pd.read_csv(p, sep="\t", usecols=NUM_COLS)
+        header = pd.read_csv(p, sep="\t", nrows=0).columns
+        if have_junc and not set(JUNC_COLS) <= set(header):
+            print(f"      [warn] {s}: junction columns missing from the counts "
+                  f"cache; junction measure disabled", flush=True)
+            have_junc = False
+        d = pd.read_csv(p, sep="\t", usecols=[c for c in want if c in header])
         if ref_ids is None:
             ref_ids = list(d["target_id"])
-            index = {t: i for i, t in enumerate(ref_ids)}
         if list(d["target_id"]) != ref_ids:
             # different target order/set: realign rather than fail
             d = d.set_index("target_id").reindex(ref_ids).reset_index()
-        rows_i.append(d["intron_depth_mean"].to_numpy(np.float32))
-        rows_e.append(d["exon_depth_mean"].to_numpy(np.float32))
+        rows["i"].append(d["intron_depth_mean"].to_numpy(np.float32))
+        rows["e"].append(d["exon_depth_mean"].to_numpy(np.float32))
+        if have_junc:
+            rows["ei"].append((d["n_EI_left"] + d["n_EI_right"]).to_numpy(np.float32))
+            rows["sp"].append((2 * d["n_EE"] + d["n_alt_donor"]
+                               + d["n_alt_acceptor"]).to_numpy(np.float32))
         found.append(s)
         if progress and k and k % progress == 0:
             print(f"      {k}/{len(samples)} samples read", flush=True)
     if not found:
         raise SystemExit("No count file found. Run `quantify` first.")
-    return np.vstack(rows_i), np.vstack(rows_e), ref_ids, found
+    ok = have_junc and len(rows["ei"]) == len(found)
+    return Counts(np.vstack(rows["i"]), np.vstack(rows["e"]),
+                  np.vstack(rows["ei"]) if ok else None,
+                  np.vstack(rows["sp"]) if ok else None, ref_ids, found)
+
+
+def load_matrix(counts_dir: str, samples: Sequence[str],
+                progress: int = 250) -> Tuple[np.ndarray, np.ndarray, List[str],
+                                              List[str]]:
+    """Backward-compatible wrapper: (intron_depth, exon_depth, target_ids, samples)."""
+    c = load_counts(counts_dir, samples, junctions=False, progress=progress)
+    return c.intron, c.exon, c.target_ids, c.samples
 
 
 def build_y(intron: np.ndarray, exon: np.ndarray, min_exon_depth: float
@@ -100,6 +164,87 @@ def build_y(intron: np.ndarray, exon: np.ndarray, min_exon_depth: float
     y = np.log2((intron + PSEUDO) / (exon + PSEUDO))
     y[exon < min_exon_depth] = np.nan
     return y
+
+
+def build_y_junction(ei: np.ndarray, split: np.ndarray, min_reads: float
+                     ) -> Tuple[np.ndarray, np.ndarray]:
+    """-> (y_J, theta). NaN where fewer than `min_reads` reads touch the two
+    splice sites, since a ratio from 3 reads is noise."""
+    with np.errstate(all="ignore"):
+        yj = np.log2((ei + PSEUDO) / (split + PSEUDO)).astype(np.float32)
+        theta = (ei / (ei + split)).astype(np.float32)
+    low = (ei + split) < min_reads
+    yj[low] = np.nan
+    theta[low] = np.nan
+    return yj, theta
+
+
+def delta_from_cohort(y_adj: np.ndarray) -> np.ndarray:
+    """Effect size: distance to the cohort median of the same intron."""
+    with np.errstate(all="ignore"):
+        return y_adj - np.nanmedian(y_adj, axis=0)
+
+
+def combine_z(z_cov: np.ndarray, z_j: np.ndarray, is_control: np.ndarray,
+              clip: float = 6.0, min_pairs: int = 200) -> Tuple[np.ndarray, float]:
+    """Stouffer-like combination, corrected for the correlation of the two z.
+
+    Both measures see the same retained transcripts, so they are correlated;
+    dividing by sqrt(2) would inflate the combined score under the null.
+    rho is estimated on control introns (the null set) with values clipped so
+    a few true events cannot drive it.
+    """
+    both = np.isfinite(z_cov) & np.isfinite(z_j)
+    m = both & is_control[None, :]
+    rho = 0.0
+    if m.sum() >= min_pairs:
+        a = np.clip(z_cov[m], -clip, clip)
+        b = np.clip(z_j[m], -clip, clip)
+        if a.std() > 0 and b.std() > 0:
+            rho = float(np.clip(np.corrcoef(a, b)[0, 1], 0.0, 0.95))
+    out = np.where(np.isfinite(z_cov), z_cov, z_j).astype(np.float32)
+    out[both] = ((z_cov[both] + z_j[both]) / np.sqrt(2.0 + 2.0 * rho)
+                 ).astype(np.float32)
+    return out, rho
+
+
+def call_hits(mode: str, z_thr: float, z_cov: np.ndarray, d_cov: np.ndarray,
+              min_delta: float, z_j: Optional[np.ndarray] = None,
+              d_j: Optional[np.ndarray] = None, min_delta_j: float = 0.5,
+              z_comb: Optional[np.ndarray] = None,
+              junction_veto: float = 1.0) -> np.ndarray:
+    """Boolean hit matrix. NaN comparisons are False, so an unmeasurable cell
+    is never a hit.
+
+    coverage : z_cov >= thr and d_cov >= min_delta             (original rule)
+    junction : z_J   >= thr and d_J   >= min_delta_j
+    combined : z_comb >= thr, at least one measure passing its effect-size
+               guard, and NOT vetoed: if the junctions are measurable and look
+               normal (z_J < junction_veto) the intron is not called whatever
+               its coverage -- intronic coverage that never touches a splice
+               site is background, not retention.
+    both     : coverage rule AND junction rule, each at z_thr (strictest; meant
+               to be used with a lower --z-threshold)
+    """
+    def rule(z, d, md):
+        with np.errstate(invalid="ignore"):
+            return np.isfinite(z) & (z >= z_thr) & np.isfinite(d) & (d >= md)
+
+    if mode == "coverage":
+        return rule(z_cov, d_cov, min_delta)
+    if z_j is None:
+        raise ValueError(f"hit mode '{mode}' needs junction counts")
+    if mode == "junction":
+        return rule(z_j, d_j, min_delta_j)
+    if mode == "both":
+        return rule(z_cov, d_cov, min_delta) & rule(z_j, d_j, min_delta_j)
+    if mode == "combined":
+        with np.errstate(invalid="ignore"):
+            effect = ((np.isfinite(d_cov) & (d_cov >= min_delta))
+                      | (np.isfinite(d_j) & (d_j >= min_delta_j)))
+            vetoed = np.isfinite(z_j) & (z_j < junction_veto)
+            return np.isfinite(z_comb) & (z_comb >= z_thr) & effect & ~vetoed
+    raise ValueError(f"unknown hit mode: {mode} (choose from {HIT_MODES})")
 
 
 def normalise_by_controls(y: np.ndarray, is_control: np.ndarray) -> Tuple[
@@ -174,15 +319,20 @@ def bh(p: np.ndarray) -> np.ndarray:
 
 def sample_scores(z: np.ndarray, y_adj: np.ndarray, is_minor: np.ndarray,
                   is_control: np.ndarray, samples: Sequence[str],
-                  z_thr: float = 3.0, min_delta: float = 0.5) -> Tuple[
+                  z_thr: float = 3.0, min_delta: float = 0.5,
+                  hit: Optional[np.ndarray] = None) -> Tuple[
                       pd.DataFrame, np.ndarray]:
-    """One row per sample. Also returns the boolean hit matrix."""
+    """One row per sample. Also returns the boolean hit matrix.
+
+    `z` is the score used for stouffer / MSRI. If `hit` is None the original
+    coverage rule is applied to (z, y_adj); otherwise `hit` (from call_hits)
+    is used as is, so the tail test counts whatever the chosen mode calls, on
+    minor and control introns alike.
+    """
     from scipy import stats
 
-    with np.errstate(all="ignore"):
-        med_ref = np.nanmedian(y_adj, axis=0)
-    delta = y_adj - med_ref
-    hit = np.isfinite(z) & (z >= z_thr) & np.isfinite(delta) & (delta >= min_delta)
+    if hit is None:
+        hit = call_hits("coverage", z_thr, z, delta_from_cohort(y_adj), min_delta)
 
     zm, zc = z[:, is_minor], z[:, is_control]
     hm = hit[:, is_minor].sum(axis=1)
@@ -266,7 +416,8 @@ def pca(z: np.ndarray, samples: Sequence[str], keep: np.ndarray,
 def hit_details(counts_dir: str, samples: Sequence[str], target_ids: Sequence[str],
                 hit: np.ndarray, z: np.ndarray, y_adj: np.ndarray,
                 meta: pd.DataFrame, is_minor: np.ndarray,
-                max_per_sample: int = 200) -> pd.DataFrame:
+                max_per_sample: int = 200,
+                extra: Optional[Dict[str, np.ndarray]] = None) -> pd.DataFrame:
     """Second pass: detailed rows for hits only.
 
     Writing every intron x every sample would be tens of millions of rows for a
@@ -288,14 +439,19 @@ def hit_details(counts_dir: str, samples: Sequence[str], target_ids: Sequence[st
         sub.insert(0, "sample", s)
         sub["z"] = z[i, idx]
         sub["y_adj"] = y_adj[i, idx]
+        for name, mat in (extra or {}).items():
+            sub[name] = mat[i, idx]
         minus = strand[idx] == "-"
         # Raw columns are labelled by GENOMIC left/right. For a minus-strand
         # gene the genomic-left boundary is the acceptor, not the donor, so we
         # relabel here (post hoc, to keep the counts cache valid).
-        sub["n_EI_donor"] = np.where(minus, sub["n_EI_right"], sub["n_EI_left"])
-        sub["n_EI_acceptor"] = np.where(minus, sub["n_EI_left"], sub["n_EI_right"])
-        sub["n_alt_5p"] = np.where(minus, sub["n_alt_acceptor"], sub["n_alt_donor"])
-        sub["n_alt_3p"] = np.where(minus, sub["n_alt_donor"], sub["n_alt_acceptor"])
+        for lo, hi, five, three in (("n_EI_left", "n_EI_right", "n_EI_donor",
+                                     "n_EI_acceptor"),
+                                    ("n_alt_donor", "n_alt_acceptor", "n_alt_5p",
+                                     "n_alt_3p")):
+            if lo in sub.columns and hi in sub.columns:
+                sub[five] = np.where(minus, sub[hi], sub[lo])
+                sub[three] = np.where(minus, sub[lo], sub[hi])
         sub = sub.drop(columns=["n_EI_left", "n_EI_right", "n_alt_donor",
                                 "n_alt_acceptor"], errors="ignore")
         out.append(sub)

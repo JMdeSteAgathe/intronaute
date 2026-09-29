@@ -3,4 +3,4 @@
 Runs without a compiler or admin rights (Windows included): pure Python BAM
 reading plus numpy / pandas / scipy / matplotlib.
 """
-__version__ = "1.0.0"
+__version__ = "1.1.0"

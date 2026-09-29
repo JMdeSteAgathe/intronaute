@@ -214,7 +214,13 @@ def cmd_analyse(a) -> None:
         _p("      -> stale samplesheet: re-run `discover`. Do NOT delete "
            "counts/, it is the cache.")
 
-    intron, exon, target_ids, samples = S.load_matrix(counts_dir, list(ss["sample"]))
+    mode = a.hit_mode
+    cnt = S.load_counts(counts_dir, list(ss["sample"]))
+    intron, exon, target_ids, samples = cnt.intron, cnt.exon, cnt.target_ids, cnt.samples
+    has_junc = cnt.ei is not None
+    if mode != "coverage" and not has_junc:
+        raise SystemExit(f"--hit-mode {mode} needs junction counts, which this "
+                         f"counts cache lacks. Re-run `quantify --force`.")
     meta = S.load_meta(a.targets).reindex(target_ids)
     runs = ss.set_index("sample")["run"].reindex(samples).fillna("run")
     _p(f"      {len(samples)} samples x {len(target_ids)} targets")
@@ -227,21 +233,66 @@ def cmd_analyse(a) -> None:
     is_minor = kind == "minor"
     is_control = kind == "control"
 
-    _p("[2/5] normalising and scoring...")
+    _p(f"[2/5] normalising and scoring (hit mode: {mode})...")
     y = S.build_y(intron, exon, a.min_exon_depth)
     measurable = np.isfinite(y).mean(axis=0) >= a.min_frac_measurable
     y[:, ~measurable] = np.nan
     y_adj, offsets = S.normalise_by_controls(y, is_control & measurable)
-    z = S.robust_z(y_adj, loo_max=a.loo_max)
-    scores, hit = S.sample_scores(z, y_adj, is_minor & measurable,
-                                  is_control & measurable, samples,
-                                  z_thr=a.z_threshold, min_delta=a.min_delta)
+    z_cov = S.robust_z(y_adj, loo_max=a.loo_max)
+    d_cov = S.delta_from_cohort(y_adj)
+
+    z_j = d_j = z_comb = theta = None
+    rho = float("nan")
+    measurable_j = np.zeros_like(measurable)
+    offsets_j = np.zeros(len(samples), dtype=np.float32)
+    if has_junc:
+        yj, theta = S.build_y_junction(cnt.ei, cnt.split, a.min_junction_reads)
+        measurable_j = np.isfinite(yj).mean(axis=0) >= a.min_frac_measurable
+        yj[:, ~measurable_j] = np.nan
+        yj_adj, offsets_j = S.normalise_by_controls(yj, is_control & measurable_j)
+        z_j = S.robust_z(yj_adj, loo_max=a.loo_max,
+                         mad_floor_q=S.JUNCTION_MAD_FLOOR_Q)
+        d_j = S.delta_from_cohort(yj_adj)
+        z_comb, rho = S.combine_z(z_cov, z_j, is_control & measurable & measurable_j)
+
+    # the analysed set: an intron is in if the chosen mode can measure it
+    if mode == "coverage":
+        usable = measurable
+    elif mode == "junction":
+        usable = measurable_j
+    elif mode == "both":
+        usable = measurable & measurable_j
+    else:
+        usable = measurable | measurable_j
+    z = {"coverage": z_cov, "junction": z_j}.get(mode, z_comb)
+    y_rep = y_adj if mode != "junction" else yj_adj   # for hits.tsv 'y_adj'
+
+    hit = S.call_hits(mode, a.z_threshold, z_cov, d_cov, a.min_delta,
+                      z_j=z_j, d_j=d_j, min_delta_j=a.min_delta_junction,
+                      z_comb=z_comb, junction_veto=a.junction_veto)
+    scores, hit = S.sample_scores(z, y_rep, is_minor & usable,
+                                  is_control & usable, samples,
+                                  z_thr=a.z_threshold, hit=hit)
+    if has_junc:
+        # single-measure counts side by side, same thresholds, for comparison
+        for name, m in (("coverage", "coverage"), ("junction", "junction")):
+            h = S.call_hits(m, a.z_threshold, z_cov, d_cov, a.min_delta,
+                            z_j=z_j, d_j=d_j, min_delta_j=a.min_delta_junction)
+            scores[f"n_hits_{name}_only_rule"] = h[:, is_minor & usable].sum(axis=1)
+        scores["n_minor_junction_measurable"] = np.isfinite(
+            z_j[:, is_minor & measurable_j]).sum(axis=1)
     scores["run"] = runs.to_numpy()
     scores = scores.sort_values(["n_hits", "stouffer"], ascending=False
                                 ).reset_index(drop=True)
+    measurable = usable
     n_minor = int((is_minor & measurable).sum())
     n_ctrl = int((is_control & measurable).sum())
     _p(f"      {n_minor} minor / {n_ctrl} control introns measurable")
+    if has_junc:
+        _p(f"      junctions measurable: {int((is_minor & measurable_j).sum())} "
+           f"minor / {int((is_control & measurable_j).sum())} control "
+           f"(>= {a.min_junction_reads:g} reads at the splice sites); "
+           f"corr(z_cov, z_junction) on controls = {rho:.2f}")
 
     _p("[3/5] PCA...")
     sc, load, expl, shape = S.pca(z, samples, is_minor & measurable,
@@ -265,8 +316,14 @@ def cmd_analyse(a) -> None:
         os.path.join(a.outdir, "pca_loadings.tsv"), sep="\t")
     scores.to_csv(os.path.join(a.outdir, "sample_scores.tsv"), sep="\t", index=False)
 
-    events = S.hit_details(counts_dir, samples, target_ids, hit, z, y_adj, meta,
-                           is_minor, max_per_sample=a.max_events_per_sample)
+    extra = {}
+    if has_junc:
+        extra = dict(z_coverage=z_cov, z_junction=z_j, theta=theta)
+        if mode in ("combined", "both"):
+            extra["z_combined"] = z_comb
+    events = S.hit_details(counts_dir, samples, target_ids, hit, z, y_rep, meta,
+                           is_minor, max_per_sample=a.max_events_per_sample,
+                           extra=extra)
     if len(events):
         events.to_csv(os.path.join(a.outdir, "hits.tsv.gz"), sep="\t",
                       index=False, compression="gzip")
@@ -278,6 +335,8 @@ def cmd_analyse(a) -> None:
             median_exon_depth=np.nanmedian(exon, axis=1),
             frac_measurable=(exon >= a.min_exon_depth).mean(axis=1),
             control_background=offsets))
+    if has_junc:
+        qc["control_junction_background"] = offsets_j
     f_scores = R.fig_score_distribution(scores, figdir, col=a.score_column)
     f_hm = R.fig_heatmap(z, samples, target_ids, is_minor & measurable, meta,
                          scores, figdir, n_samples=a.heatmap_samples,
@@ -301,6 +360,8 @@ def cmd_analyse(a) -> None:
 
     show = ["sample", "run", "n_hits", "n_hits_control", "enrichment", "tail_q",
             "MSRI", "stouffer", "n_minor_measurable"]
+    if has_junc:
+        show += ["n_hits_coverage_only_rule", "n_hits_junction_only_rule"]
     run_tbl = pd.DataFrame()
     if runs.nunique() > 1:
         run_tbl = (scores.groupby("run")
@@ -311,7 +372,8 @@ def cmd_analyse(a) -> None:
                    .sort_values("n_hits_median", ascending=False).reset_index())
 
     ev_cols = [c for c in ["sample", "gene_name", "chrom", "intron_start",
-                           "intron_end", "strand", "z", "y_adj",
+                           "intron_end", "strand", "z", "z_coverage",
+                           "z_junction", "theta", "y_adj",
                            "intron_depth_mean", "exon_depth_mean", "n_EE",
                            "n_EI_donor", "n_EI_acceptor", "n_alt_5p", "n_alt_3p"]
                if not len(events) or c in events.columns]
@@ -319,7 +381,7 @@ def cmd_analyse(a) -> None:
               events.groupby("sample").head(3).head(60)[ev_cols])
 
     R.write_html(os.path.join(a.outdir, "report.html"), dict(
-        n_samples=len(samples), n_minor=n_minor, n_control=n_ctrl,
+        n_samples=len(samples), n_minor=n_minor, n_control=n_ctrl, hit_mode=mode,
         points=points, xlab=f"PC1 ({100*expl[0]:.1f} %)",
         ylab=f"PC2 ({100*expl[1]:.1f} %)",
         top_samples=scores.head(a.top_samples)[show],
@@ -406,6 +468,22 @@ def build_parser() -> argparse.ArgumentParser:
         sp.add_argument("--min-frac-measurable", type=float, default=0.5)
         sp.add_argument("--z-threshold", type=float, default=3.0)
         sp.add_argument("--min-delta", type=float, default=0.5)
+        sp.add_argument("--hit-mode", default="coverage",
+                        choices=["coverage", "junction", "combined", "both"],
+                        help="what defines a hit: intronic coverage ratio, "
+                             "splice-site junction ratio (FRASER-like theta), "
+                             "their correlation-corrected combination, or both "
+                             "rules at once")
+        sp.add_argument("--min-junction-reads", type=float, default=10,
+                        help="junction ratio is NaN below this many reads "
+                             "(crossing + spliced) at the two splice sites")
+        sp.add_argument("--min-delta-junction", type=float, default=0.5,
+                        help="effect-size guard for the junction ratio, log2 "
+                             "odds above the cohort median")
+        sp.add_argument("--junction-veto", type=float, default=1.0,
+                        help="combined mode: never call an intron whose "
+                             "junctions are measurable with z_junction below "
+                             "this. Use -inf to disable")
         sp.add_argument("--loo-max", type=int, default=60,
                         help="exact leave-one-out below this cohort size")
         sp.add_argument("--min-cohort", type=int, default=20)

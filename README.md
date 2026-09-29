@@ -95,13 +95,16 @@ For every minor intron:
    vary between samples — RNA degradation, genomic-DNA carry-over, nuclear
    pre-mRNA, depth. Without it, a slightly degraded sample looks like a global
    positive.
-4. **robust z per intron** against the cohort:
+4. **junction ratio** (optional, see below) — the same question asked only at
+   the two splice sites, from reads that cross them vs reads that splice.
+5. **robust z per intron** against the cohort:
    `z = 0.6745 × (y_adj − median) / MAD`
-5. **aggregation across the whole minor-intron set** — see below.
+6. **aggregation across the whole minor-intron set** — see below.
 
 ### A "hit"
 
-An intron counts as a hit in a sample when **all three** hold:
+With the default `--hit-mode coverage`, an intron counts as a hit in a sample
+when **all three** hold:
 
 - it is **measurable**: flanking-exon depth ≥ 8 (`--min-exon-depth`), else `NaN`
   and it counts in neither numerator nor denominator;
@@ -112,6 +115,74 @@ An intron counts as a hit in a sample when **all three** hold:
 
 `n_hits_control` applies **exactly the same rule** to the major introns, which
 makes the ratio of the two directly interpretable.
+
+### Junction ratio (`--hit-mode`)
+
+Intronic coverage has two blind spots. In **exon-capture** libraries the probes
+barely reach the intron body, so the coverage ratio is mostly noise. And in
+**noisy samples** the intron body can gain coverage with no retention at all:
+reads pile up mid-intron without touching either splice site.
+
+The junction ratio only looks at the splice sites, pooled over donor and
+acceptor (FRASER's θ):
+
+```
+EI    = reads crossing the donor  + reads crossing the acceptor   (unspliced)
+S     = spliced reads at the donor + spliced reads at the acceptor
+theta = EI / (EI + S)
+y_J   = log2((EI + 0.5) / (S + 0.5))
+```
+
+It is measurable when `EI + S ≥ 10` (`--min-junction-reads`), and then goes
+through exactly the same chain as the coverage ratio: control-intron offset,
+robust z, effect-size guard (`--min-delta-junction`, log2 odds). Everything it
+needs is already in the counts cache, so **no re-quantification is needed**.
+
+| `--hit-mode` | an intron is a hit when… | use for |
+|---|---|---|
+| `coverage` (default) | `z_cov ≥ thr` and coverage effect ≥ `--min-delta` — the original rule | backward compatibility |
+| `junction` | `z_J ≥ thr` and junction effect ≥ `--min-delta-junction` | exon capture, when intronic coverage is uninformative |
+| `combined` | `z_comb ≥ thr`, one of the two effect guards passes, and **not vetoed** | polyA and capture — start here |
+| `both` | the coverage rule **and** the junction rule, each at `thr` | maximum specificity, with a lower `--z-threshold` |
+
+`z_comb = (z_cov + z_J) / √(2 + 2ρ)`, where ρ is the correlation of the two z
+measured on the **control** introns of your cohort (printed during `analyse`).
+Dividing by √2 alone would inflate the score under the null, since both
+measures see the same retained transcripts. When only one measure is available
+for an intron, `z_comb` falls back to it.
+
+The **veto** (`--junction-veto`, default 1.0) encodes the observation that
+motivated all this: if an intron's junctions are measurable and look normal
+(`z_J < 1`), it is not called whatever its coverage. Set `-inf` to disable.
+
+Whatever the mode, `n_hits_control` is counted with the **same rule**, so the
+tail test stays self-calibrated. `sample_scores.tsv` also reports
+`n_hits_coverage_only_rule` and `n_hits_junction_only_rule` side by side, and
+`hits.tsv.gz` gives `z_coverage`, `z_junction`, `theta` for every call — use
+them to see which evidence drives each hit.
+
+**Lowering `--z-threshold`.** The combined score gives you room to, but check
+the price on your own cohort: run twice and compare `n_hits_control`, which is
+your empirical false-positive rate.
+
+On simulation (200 samples, toy model — this checks the logic, it does not
+calibrate your data):
+
+| library | mode, z | per-intron sensitivity | false hits / clean sample | false hits / noisy sample |
+|---|---|---|---|---|
+| polyA | coverage, 3 | 0.36 | 1.5 | 55 |
+| polyA | combined, 3 | 0.43 | 0.7 | 7 |
+| polyA | combined, 2.5 | 0.55 | 2.5 | 8 |
+| capture | coverage, 3 | 0.11 | 3.5 | 30 |
+| capture | junction, 3 | 0.45 | 0.8 | 0.7 |
+| capture | combined, 3 | 0.47 | 0.9 | 6 |
+
+(capture rows: 6-fold retention; at 3-fold no mode reached sample-level
+significance, junction-based ones still ranking affected samples far better,
+AUC 0.93 vs 0.53.) Junction-only is weaker than coverage on polyA because two
+splice sites collect far fewer reads than a whole intron body: it is
+count-limited, which is why `combined` is the default recommendation rather
+than `junction`.
 
 ### Per-sample scores
 
@@ -281,10 +352,23 @@ intronaute/
   cli.py        command line
   selftest.py   self-check against an embedded mini-BAM
 examples/       small BED and TSV intron lists showing accepted formats
+tests/
+  simulate_junction.py   synthetic cohort with known truth; compares hit modes
 ```
 
 Want to try other aggregation statistics? Start from `hits.tsv.gz` and
 `pca_coordinates.tsv` rather than touching the counting step.
+
+## Changes
+
+**1.1.0**
+- Junction ratio and `--hit-mode {coverage,junction,combined,both}`. Default
+  unchanged (`coverage`); existing counts caches work as is.
+- **Fix:** strandedness auto-detection never ran. It selected probe introns
+  with `kind == "u12"` while the target table says `"minor"`, got none, and
+  fell back to `unstranded` for every sample, so antisense reads were never
+  filtered. Stranded cohorts quantified with 1.0.0 should be re-run with
+  `quantify --force` (the cache does not know about this change).
 
 ## License
 

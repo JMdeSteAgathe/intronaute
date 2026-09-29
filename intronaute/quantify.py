@@ -65,8 +65,8 @@ def load_targets(tsv: str, kinds: Optional[Sequence[str]] = None,
     if kinds:
         df = df[df["kind"].isin(kinds)]
     if min_methods > 0:
-        keep = (df["kind"] != "u12") | (df["n_methods"].fillna(0) >= min_methods)
-        pairs = set(df.loc[keep & (df["kind"] == "u12"), "pair_id"])
+        keep = (df["kind"] != "minor") | (df["n_methods"].fillna(0) >= min_methods)
+        pairs = set(df.loc[keep & (df["kind"] == "minor"), "pair_id"])
         df = df[keep & df["pair_id"].isin(pairs)]
     out = []
     for r in df.itertuples(index=False):
@@ -195,7 +195,7 @@ def quantify_bam(
 
     if library == "auto":
         library, frac = bamio.detect_library_type(
-            bam, [t for t in targets if t.kind == "u12"][:400],
+            bam, [t for t in targets if t.kind == "minor"][:400],
             min_mapq=min_mapq, prefer=backend)
         if not quiet:
             print(f"    detected strandedness: {library} (sense fraction={frac:.2f})", flush=True)

@@ -17,5 +17,11 @@
   "min_exon_depth": 8.0,
   "min_frac_measurable": 0.5,
   "z_threshold": 3.0,
-  "min_delta": 0.5
+  "min_delta": 0.5,
+
+  "_comment_hit_mode": "coverage (default) | junction | combined | both. See README, 'Junction ratio'.",
+  "hit_mode": "coverage",
+  "min_junction_reads": 10,
+  "min_delta_junction": 0.5,
+  "junction_veto": 1.0
 }

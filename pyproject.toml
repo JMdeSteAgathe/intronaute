@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "intronaute"
-version = "1.0.0"
+version = "1.1.0"
 description = "Minor-intron (U12) retention detection from RNA-seq BAM cohorts"
 readme = "README.md"
 requires-python = ">=3.9"

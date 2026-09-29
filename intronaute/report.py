@@ -367,7 +367,8 @@ def write_html(path: str, ctx: dict) -> str:
         "<h1>Intronaute &mdash; minor-intron retention</h1>",
         f"<div class='sub'>{ctx['n_samples']} samples &middot; "
         f"{ctx['n_minor']} minor introns &middot; {ctx['n_control']} control "
-        f"introns &middot; {datetime.datetime.now():%Y-%m-%d %H:%M}</div>",
+        f"introns &middot; hit mode <b>{ctx.get('hit_mode', 'coverage')}</b> "
+        f"&middot; {datetime.datetime.now():%Y-%m-%d %H:%M}</div>",
 
         "<h2>1. Sample map (PCA of minor introns)</h2>",
         "<div class='sub'>Every point is a sample, positioned by its minor-intron "
