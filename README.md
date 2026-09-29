@@ -53,7 +53,7 @@ intronaute discover --bam-dir /data/run1/BAM /data/run2/BAM
 intronaute quantify --workers 8
 
 # 4. statistics, PCA, interactive HTML report
-intronaute analyse
+intronaute analyse --hit-mode combined
 ```
 
 Or `intronaute run --bam-dir ...` for all four. Every option can also live in a
