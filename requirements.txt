@@ -1,6 +1,21 @@
 # Everything installs from pip with no compiler and no admin rights.
-numpy>=1.23
-pandas>=1.5
+# On Sherlock, plain `pip install -r requirements.txt` may try to compile
+# numpy/pandas from source. Use wheels first, then editable install:
+#
+#   python -m venv .venv
+#           Linux/macOS:  source .venv/bin/activate
+#           Windows:      .venv\Scripts\activate
+#   pip install -e .
+#   intronaute selftest
+# OR
+#   pip install --only-binary=:all: "numpy>=1.23,<2.5" "pandas>=1.5,<3" \
+#       "scipy>=1.9" "matplotlib>=3.5"
+#   pip install "odfpy>=1.4"
+#   pip install -e . --no-deps
+#   intronaute selftest
+#
+numpy>=1.23,<2.5
+pandas>=1.5,<3
 scipy>=1.9
 matplotlib>=3.5
 odfpy>=1.4          # only needed to read .ods intron lists
