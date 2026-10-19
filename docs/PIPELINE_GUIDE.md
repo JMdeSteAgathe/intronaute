@@ -135,7 +135,7 @@ Default **hit mode** in the submit script: **`combined`** (coverage + junction, 
 
 ### Submit scripts
 
-- **`submit_intronaute.sh`** requires **`--config`** and submits **`intronaute.sh`**. That job script holds the Slurm CPUs, memory, time, and **`WORKERS`**, then calls the **`intronaute`** tool. It sources **`load_deps.sh`** from the script directory when the project virtualenv is not already active or `Rscript` does not start. Any R that starts is kept. `hits.rds` uses base R only. Slurm logs go in **`<outdir>/Logs`**.
+- **`submit_intronaute.sh`** requires **`--config`** and submits **`intronaute.sh`**. That job script holds the Slurm CPUs, memory, time, and **`WORKERS`**, then calls the **`intronaute`** tool. It sources **`load_deps.sh`** from the script directory when the project virtualenv is not already active. Slurm logs go in **`<outdir>/Logs`**.
 
 ### Python entry
 
@@ -591,18 +591,15 @@ Analyse writes the hit calls into **`samples_ranked_minor_introns/`** inside the
 | File | What it holds |
 |------|----------------|
 | `hits.tsv.gz` | One row per called **minor** intron, for one sample. Gene, coordinates, the calling score `z`, the adjusted ratio `y_adj`, depths, and the splice-site counts. |
-| `hits.rds` | The same rows as `hits.tsv.gz`, stored as an R data frame. |
 | `sample_scores.tsv` | One row per sample. `n_hits` is how many minor introns passed the hit rule. `n_hits_control` is how many U2 control introns passed the same rule. |
 
 **`hits.tsv.gz` is the per-intron list.** Each row is one sample and one minor intron that passed the rule in the table above. It carries `gene_name`, `gene_id`, `chrom`, `intron_start`, `intron_end`, `strand`, and `intron_len`. `z` is the score the chosen hit mode used (`z_cov`, `z_J`, or `z_comb`). `y_adj` is the adjusted coverage ratio, or the adjusted junction ratio when the mode is `junction`. The row also has the raw depths: `intron_depth_mean`, `exon_depth_mean`, `exon_depth_left`, `exon_depth_right`, `n_intron_reads`, and `intron_frac_cov`. When junctions were counted, the splice-site reads are relabeled by transcript direction: `n_EI_donor` and `n_EI_acceptor` are the unspliced crossings, `n_EE` is the exon–exon spliced reads, and `n_alt_5p` and `n_alt_3p` are the alternate splice sites. Those rows also include `z_coverage`, `z_junction`, and `theta`. In `combined` or `both` mode the row includes `z_combined` as well.
 
-Rows are sorted by sample, then by `z` from high to low. Each sample keeps only its top **`--max-events-per-sample`** minor hits (default **200**). **`n_hits` is the full count, before that cap.** A sample with 250 minor hits has `n_hits` of 250 and 200 rows in `hits.tsv.gz`. A sample with no minor hits has `n_hits` of 0 and no rows in that file. If the whole cohort has no minor hits, `hits.tsv.gz` and `hits.rds` are not written.
+Rows are sorted by sample, then by `z` from high to low. Each sample keeps only its top **`--max-events-per-sample`** minor hits (default **200**). **`n_hits` is the full count, before that cap.** A sample with 250 minor hits has `n_hits` of 250 and 200 rows in `hits.tsv.gz`. A sample with no minor hits has `n_hits` of 0 and no rows in that file. If the whole cohort has no minor hits, `hits.tsv.gz` is not written.
 
 Control-intron hits use the same rule, including the veto in combined mode. They are **not** given rows in `hits.tsv.gz`. Their total is only the column `n_hits_control`.
 
-**`hits.rds` is that same table for R.** It is written with `saveRDS` in the same step as the gzip file, and only when that gzip file is written. If `Rscript` is missing, `hits.tsv.gz` is already on disk and the run stops before the `.rds` file.
-
-**`sample_scores.tsv` has every sample**, including samples with zero hits. `n_hits` counts minor introns that passed. `n_hits_control` counts control introns that passed. Enrichment, `tail_p`, `tail_q`, `MSRI`, and `stouffer` are built from those two counts and from the z scores. Those columns are described in §8. The pictures of these scores (`samples_ranked_minor_introns/score_distribution.png`, `most_retained_minor_introns/heatmap_n_hits.png`, `report.html`) are described in §9.1. The intron-level calls themselves are the three files above.
+**`sample_scores.tsv` has every sample**, including samples with zero hits. `n_hits` counts minor introns that passed. `n_hits_control` counts control introns that passed. Enrichment, `tail_p`, `tail_q`, `MSRI`, and `stouffer` are built from those two counts and from the z scores. Those columns are described in §8. The pictures of these scores (`samples_ranked_minor_introns/score_distribution.png`, `most_retained_minor_introns/heatmap_n_hits.png`, `report.html`) are described in §9.1. The intron-level calls themselves are the two files above.
 
 ---
 

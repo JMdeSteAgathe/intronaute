@@ -305,7 +305,7 @@ is listed only when that part of the report was written.
 | `results/report.html` | The report above. Figures are embedded. |
 | `results/samplesheet.tsv` | The sample list used for that run. |
 | `results/sample_mapped_PCA_minor_introns/` | `pca_<colour>.png` for each score and samplesheet column, plus `pca_coordinates.tsv`, `pca_variance.tsv`, `pca_loadings.tsv` |
-| `results/samples_ranked_minor_introns/` | `sample_scores.tsv`, `hits.tsv.gz`, `hits.rds`, `score_distribution.png`; `n_hits/rank_<colour>.png`; `n_hits_vs_n_hits_control/scatter_<colour>.png` |
+| `results/samples_ranked_minor_introns/` | `sample_scores.tsv`, `hits.tsv.gz`, `score_distribution.png`; `n_hits/rank_<colour>.png`; `n_hits_vs_n_hits_control/scatter_<colour>.png` |
 | `results/most_retained_minor_introns/` | `heatmap_n_hits.png`, `heatmap_n_hits_control.png`, `heatmap_tail_q.png` |
 | `results/shared_minor_intron_genes/` | `upset_<group>.png`, `upset_shared_genes.tsv`, and `singleton_minor_hit_genes.tsv` when a group has one person |
 | `results/quality_control/` | `qc.png`, plus one PNG per colour under `median_exonic_depth/`, `frac_targets_meas/`, and `intronic_background/` |

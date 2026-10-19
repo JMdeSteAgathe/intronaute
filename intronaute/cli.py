@@ -29,46 +29,6 @@ def _p(msg: str = "") -> None:
     print(msg, flush=True)
 
 
-_HITS_RDS_R = r"""
-hits <- read.delim(gzfile(Sys.getenv("HITS_TSV")), sep = "\t", check.names = FALSE,
-                   stringsAsFactors = FALSE, quote = "", comment.char = "")
-int_cols <- c("n_intron_reads", "n_EE", "n_EI_donor", "n_EI_acceptor",
-              "n_alt_5p", "n_alt_3p", "intron_start", "intron_end", "intron_len")
-for (col in intersect(int_cols, names(hits))) {
-  storage.mode(hits[[col]]) <- "integer"
-}
-saveRDS(hits, Sys.getenv("HITS_RDS"), version = 3)
-"""
-
-
-def _rscript() -> str:
-    import shutil
-    found = shutil.which("Rscript")
-    if found:
-        return found
-    home = os.path.expanduser("~")
-    for cand in (os.path.join(home, ".pixi", "envs", "r-base", "bin", "Rscript"),
-                 os.path.join(home, ".pixi", "bin", "Rscript")):
-        if os.path.isfile(cand) and os.access(cand, os.X_OK):
-            return cand
-    raise SystemExit("Rscript not found, so hits.rds was not written. "
-                     "hits.tsv.gz is already in the output directory.")
-
-
-def _write_hits_rds(tsv_gz: str, rds_path: str) -> None:
-    """Same rows as hits.tsv.gz, stored as an R data frame."""
-    import subprocess
-    env = os.environ.copy()
-    env["HITS_TSV"] = tsv_gz
-    env["HITS_RDS"] = rds_path
-    proc = subprocess.run(
-        [_rscript(), "-e", _HITS_RDS_R],
-        capture_output=True, text=True, env=env)
-    if proc.returncode != 0:
-        detail = (proc.stderr or proc.stdout or "").strip()
-        raise SystemExit(f"Rscript failed while writing {rds_path}:\n{detail}")
-
-
 def sample_name(bam: str) -> str:
     base = re.sub(r"\.bam$", "", os.path.basename(bam), flags=re.I)
     return SUFFIX_RE.sub("", base) or base
@@ -664,7 +624,6 @@ def cmd_analyse(a) -> None:
     if len(events):
         hits_gz = os.path.join(dirs["ranked"], "hits.tsv.gz")
         events.to_csv(hits_gz, sep="\t", index=False, compression="gzip")
-        _write_hits_rds(hits_gz, os.path.join(dirs["ranked"], "hits.rds"))
 
     _p("[5/5] figures and report...")
     with np.errstate(all="ignore"):
@@ -863,7 +822,7 @@ def cmd_analyse(a) -> None:
     _p(f"Report : {os.path.join(a.outdir, 'report.html')}")
     _p(f"Tables : {dirs['ranked']}/sample_scores.tsv, "
        f"{dirs['pca']}/pca_coordinates.tsv, "
-       f"{dirs['ranked']}/hits.tsv.gz, {dirs['ranked']}/hits.rds")
+       f"{dirs['ranked']}/hits.tsv.gz")
 
 
 def cmd_run(a) -> None:

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Load this project's Python virtualenv and R.
+# Load this project's Python virtualenv.
 #
 # Source it so the current shell keeps the change:
 #   source ./load_deps.sh            # ask before replacing commands already on PATH
@@ -7,8 +7,6 @@
 #   source ./load_deps.sh --no       # keep the commands already on PATH
 #
 # Python comes from .venv (intronaute, numpy, pandas, scipy, matplotlib).
-# An Rscript already on PATH is kept when it starts. Otherwise R is taken
-# from ~/.pixi/envs/r-base when that install exists. hits.rds needs only base R.
 #
 # --help prints lines 2-9 of this file. Leave that block where it is.
 
@@ -44,15 +42,14 @@ fi
 # One function so a failure can return to the sourcing shell instead of
 # exiting it. The helpers are nested because they are removed before return.
 _load_deps() {
-  local root venv r_env choice arg
+  local root venv choice arg
   local -a conflicts=()
-  local i name current target reply front
-  local python_conflict=0 r_conflict=0
+  local i name current target reply
+  local python_conflict=0
 
-  # This file lives next to .venv. R is the user's pixi env, not a copy in the repo.
+  # This file lives next to .venv.
   root="$(cd "$(dirname "${_LOAD_DEPS_SELF}")" && pwd)"
   venv="${root}/.venv"
-  r_env="${HOME}/.pixi/envs/r-base"
   choice=""
 
 #############################################---Step 3: Parse Arguments---#########################################################
@@ -113,14 +110,6 @@ _load_deps() {
     conflicts+=("$1"$'\x1f'"$2"$'\x1f'"$3")
   }
 
-  # hits.rds is written with base R (read.delim and saveRDS). A binary that
-  # exists but cannot start does not count as a usable Rscript.
-  _load_deps_r_ready() {
-    local bin="$1"
-    [[ -n "${bin}" && -x "${bin}" ]] || return 1
-    "${bin}" -e 'quit(status = 0)' >/dev/null 2>&1
-  }
-
 ######################################---Step 4: Find Commands That Would Change---################################################
   # Skip the scan when this venv is already active. Otherwise every executable
   # in .venv/bin is a possible replacement. activate* scripts are not commands
@@ -139,36 +128,6 @@ _load_deps() {
         python_conflict=1
       fi
     done
-  fi
-
-  # An Rscript that already starts is kept, including when --yes was passed.
-  # That is not a conflict. --yes only replaces commands recorded below.
-  # No Rscript on PATH is also not a conflict: the pixi one is added later.
-  # ~/.pixi/bin/Rscript and ~/.pixi/bin/R are pixi shims. They already point
-  # at this env, so they are not treated as a foreign R.
-  local want_r="" want_rscript="" have_r=0 r_ready=0
-  current="$(_load_deps_on_path Rscript)"
-  if _load_deps_r_ready "${current}"; then
-    r_ready=1
-  fi
-  if [[ -x "${r_env}/bin/R" && -x "${r_env}/bin/Rscript" ]]; then
-    have_r=1
-    want_r="${r_env}/bin/R"
-    want_rscript="${r_env}/bin/Rscript"
-    if [[ "${r_ready}" -eq 1 ]]; then
-      :
-    elif [[ -z "${current}" ]]; then
-      :
-    elif [[ "${current}" == "${HOME}/.pixi/bin/Rscript" ]] || _load_deps_same "${current}" "${want_rscript}"; then
-      :
-    else
-      _load_deps_add "Rscript" "${current}" "${want_rscript}"
-      r_conflict=1
-      current="$(_load_deps_on_path R)"
-      if [[ -n "${current}" && "${current}" != "${HOME}/.pixi/bin/R" ]] && ! _load_deps_same "${current}" "${want_r}"; then
-        _load_deps_add "R" "${current}" "${want_r}"
-      fi
-    fi
   fi
 
 #####################################---Step 5: Ask Before Replacing Commands---###################################################
@@ -226,50 +185,12 @@ _load_deps() {
     echo "Python: ${venv}" >&2
   fi
 
-################################################---Step 7: Load R---###############################################################
-  # Neither a working Rscript nor a pixi r-base install: say so and continue.
-  # The function still returns success. intronaute.sh is what requires R.
-  # A working Rscript (r_ready) is kept even if pixi R also exists.
-  # The pixi shim, or a path that is already the r-base Rscript, is already
-  # the right R, so PATH is left as it is.
-  # Otherwise, when pixi R exists and the user allowed the replacement (or
-  # there was nothing to replace), symlink R and Rscript into .deps_bin and
-  # put that directory first on PATH. The symlinks avoid activating pixi
-  # itself. .deps_bin is gitignored.
-  if [[ "${have_r}" -eq 0 && "${r_ready}" -eq 0 ]]; then
-    echo "Rscript was not found." >&2
-  else
-    current="$(_load_deps_on_path Rscript)"
-    local r_ok=0
-    if [[ "${r_ready}" -eq 1 ]]; then
-      r_ok=1
-    elif [[ "${current}" == "${HOME}/.pixi/bin/Rscript" ]] || _load_deps_same "${current}" "${want_rscript}"; then
-      r_ok=1
-    fi
-    if [[ "${r_ok}" -eq 0 && "${have_r}" -eq 1 && ( "${r_conflict}" -eq 0 || "${choice}" == "yes" ) ]]; then
-      front="${root}/.deps_bin"
-      command mkdir -p "${front}"
-      ln -sfn "${want_r}" "${front}/R"
-      ln -sfn "${want_rscript}" "${front}/Rscript"
-      PATH="${front}:${PATH}"
-      export PATH
-      hash -r 2>/dev/null || true
-      r_ok=1
-      r_ready=0
-    fi
-    if [[ "${r_ok}" -eq 1 ]]; then
-      echo "R: $(_load_deps_on_path Rscript)" >&2
-    else
-      echo "R left unchanged: ${current:-not on PATH}" >&2
-    fi
-  fi
-
   # Drop the helpers so a later source does not keep the previous copies.
-  unset -f _load_deps_on_path _load_deps_same _load_deps_add _load_deps_r_ready
+  unset -f _load_deps_on_path _load_deps_same _load_deps_add
   return 0
 }
 
-###############################################---Step 8: Run the Loader---########################################################
+###############################################---Step 7: Run the Loader---########################################################
 # return, not exit. A failed source should set $? in the caller's shell
 # and leave that shell running. The status is saved first because unset
 # would replace it.

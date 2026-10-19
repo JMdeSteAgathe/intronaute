@@ -78,21 +78,15 @@ if [[ -n "${INTRONAUTE_BAM_DIRS:-}" ]]; then
   done <<< "${INTRONAUTE_BAM_DIRS}"
 fi
 
-# True only when this process already has the project venv and a working Rscript.
-# hits.rds is base R only: read.delim and saveRDS. VIRTUAL_ENV must be this
-# .venv, not some other environment that happens to be active.
+# True only when this process already has the project venv.
+# VIRTUAL_ENV must be this .venv, not some other environment that happens to be active.
 project_deps_ready() {
-  local venv current
+  local venv
   venv="${SCRIPT_DIR}/.venv"
 
   [[ -f "${venv}/bin/activate" && -x "${venv}/bin/intronaute" ]] || return 1
   [[ -n "${VIRTUAL_ENV:-}" ]] || return 1
   [[ "$(readlink -f "${VIRTUAL_ENV}")" == "$(readlink -f "${venv}")" ]] || return 1
-
-  # hits.rds is base R only: read.delim and saveRDS.
-  current="$(type -P Rscript 2>/dev/null || true)"
-  [[ -n "${current}" && -x "${current}" ]] || return 1
-  "${current}" -e 'quit(status = 0)' >/dev/null 2>&1
 }
 
 ##########################################---Step 3: Load Dependencies---##########################################################
@@ -101,7 +95,7 @@ project_deps_ready() {
 cd "${SCRIPT_DIR}"
 
 # A batch job has no terminal, so load_deps.sh is sourced with --yes.
-# That replaces a conflicting python or R instead of waiting for a prompt.
+# That replaces a conflicting python instead of waiting for a prompt.
 # The || exit 1 is here because a failing source under set -e does not
 # always abort the caller.
 if project_deps_ready; then
