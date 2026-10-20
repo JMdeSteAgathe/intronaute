@@ -13,7 +13,6 @@ samplesheet.tsv
 .ipynb_checkpoints/
 config/all_bams_updated.tsv
 config/all_bams.tsv
-config/example_config.yaml
 docs/RAW_VS_UPDATED.md
 docs/RAW_VS_UPDATED.pdf
 docs/table_format.tex
