@@ -1,0 +1,64 @@
+# Cohort input: set samplesheet, or omit it and set bam_dir or bam_dirs.
+# If samplesheet is set, discover is skipped. If only bam_dir or bam_dirs is
+# set, discover walks those directories and writes samplesheet.tsv in the
+# project root. bam_dir is one directory. bam_dirs is one directory or several.
+# bam_dir: "/path/to/bam/folder"
+# bam_dirs:
+#   - "/path/to/first/bam/folder"
+#   - "/path/to/second/bam/folder"
+# bam_dirs: ["/path/to/first/bam/folder", "/path/to/second/bam/folder"]
+samplesheet: "/path/to/your/samplesheet.tsv"
+outdir: "/path/to/your/desired/output/directory"
+introns: "/path/to/your/GRCh38_ensembl110_u12-type_introns.ods"
+gtf: "path/to/your/gencode.gtf.gz"
+
+# Optional flags. Uncomment a line to replace that flag's default.
+# A line left commented keeps the default. Command-line flags win over this
+# file. submit_intronaute.sh passes this file as --config.
+# After changing a quantify flag (min_mapq, min_overhang, keep_duplicates,
+# library), re-count with --force. Analyse flags do not need a re-count.
+#
+# prepare
+# coord_base: auto            # auto | 0 | 1
+# sheet: null                 # ODS/XLSX sheet name
+# exon_window: 300
+# intron_pad: 12
+# exon_pad: 5
+# min_core_len: 40
+# min_exon_ref: 50
+# max_core_window: 2000
+# n_controls: 2
+# mask_strand: both           # both | sense
+# force_prepare: false
+#
+# quantify
+# min_mapq: 10
+# min_overhang: 6
+# keep_duplicates: false      # true keeps reads marked duplicate
+# library: auto               # auto | reverse | forward | unstranded
+# engine: auto                # auto | fastbam | pysam | bamnostic
+# workers: 0                  # 0 = auto. intronaute.sh sets WORKERS and passes
+#                             # it as --workers, which wins over this key.
+# max_reads_per_region: 300000
+# force: false
+#
+# analyse
+# min_exon_depth: 8.0
+# min_frac_measurable: 0.5
+# z_threshold: 3.0
+# min_delta: 0.5
+# hit_mode: combined          # coverage | junction | combined | both
+#                             # Uncomment to set the mode. A commented line
+#                             # keeps combined, unless you pass --hit-mode.
+# min_junction_reads: 10
+# min_delta_junction: 0.5
+# junction_veto: 1.0          # -inf disables the veto
+# loo_max: 60
+# min_cohort: 20
+# pca_clip: 8.0
+# pca_scale: false
+# score_column: n_hits
+# top_samples: 25
+# heatmap_samples: 30
+# heatmap_introns: 0          # 0 = every measurable minor intron
+# max_events_per_sample: 200

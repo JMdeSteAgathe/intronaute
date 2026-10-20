@@ -57,8 +57,47 @@ intronaute analyse --hit-mode combined
 ```
 
 Or `intronaute run --bam-dir ...` for all four. Every option can also live in a
-JSON config: `intronaute analyse --config myconfig.json` (command-line flags
-take precedence).
+YAML or JSON config: `intronaute analyse --config config/config.yaml`. Each key
+is optional. A key that is present replaces that flag's default, and a missing
+key keeps the default. Command-line flags take precedence.
+
+### Run on Slurm
+
+From a login node, `submit_intronaute.sh` reads the config and submits
+`intronaute.sh`. The job script holds the Slurm settings and calls the
+`intronaute` command. Build `.venv` in this directory first (`requirements.txt`
+on Sherlock: install the wheels, then `pip install -e . --no-deps`). The job
+stops if that virtualenv is missing.
+
+Edit the `#SBATCH` lines and `WORKERS` in `intronaute.sh` for the cluster
+account, partition, CPUs, memory, and time. `WORKERS` is passed as
+`--workers`, so it wins over a `workers` key in the config. Keep it equal to
+`--cpus-per-task` unless you want fewer quantify processes.
+
+`config/config.yaml` needs `outdir`, `introns`, `gtf`, and either `samplesheet`
+or `bam_dir` / `bam_dirs`. A path that does not start with `/` is resolved from
+the directory that contains the scripts. If `samplesheet` is set, discover is
+skipped. If it is omitted, discover walks the BAM directories and writes
+`samplesheet.tsv` in that same directory.
+
+```bash
+cd /path/to/French_approach_updated
+./submit_intronaute.sh --config config/config.yaml
+./submit_intronaute.sh --config config/config.yaml analyse
+./submit_intronaute.sh --force-prepare --config config/config.yaml all
+./submit_intronaute.sh --hit-mode coverage --config config/config.yaml all
+./submit_intronaute.sh --local --config config/config.yaml all
+```
+
+With no stage name the job runs `all`: prepare, discover when needed, quantify,
+then analyse. `prepare`, `quantify`, and `analyse` run that stage. Prepare also
+runs when `targets.tsv.gz` is missing. `--local` runs in the current shell
+instead of submitting. `--force-prepare` rebuilds the target table.
+`--force-quantify` re-counts. `--hit-mode` wins over the config. When
+`hit_mode` is commented out, this script uses `combined`.
+
+Logs go to `<outdir>/Logs/intronaute_<jobid>.log`. The report is
+`<outdir>/report.html`.
 
 ### Input formats for the intron list
 
@@ -208,43 +247,91 @@ ranked it at `q = 1.0` where a raw hit count would have flagged it.
 
 ## Output
 
-The report opens on an **interactive PCA** of the cohort: every sample is a
-point, positioned by its minor-intron retention profile.
+`analyse` writes `report.html` in `outdir`, plus one directory per section of
+that report. The same pictures are in the HTML and as PNG files. The HTML is
+the copy you can search, colour, zoom, and switch. A PNG is that picture with
+none of those controls. The page is plain JavaScript on a canvas, with no CDN,
+so the single file works offline and can be emailed as-is.
 
-- type in the search box to highlight samples or whole runs (space-separated
-  terms, substring match)
-- scroll to zoom, drag to pan, click a point to pin its label
-- recolour by `n_hits`, `-log10(tail_q)`, `log2(enrichment)`, `MSRI` or
-  `stouffer`
-- "pin top 10" labels the strongest samples
+A contents bar stays at the top. Each link jumps to a section, and a section
+is listed only when that part of the report was written.
 
-It is plain JavaScript on a canvas with no CDN, so the single `report.html`
-works offline, handles thousands of points, and can be emailed as-is.
+1. **Sample map.** One interactive PCA. A point is one sample, placed by its
+   minor-intron z profile. Search highlights a sample or a run, scroll zooms,
+   drag pans, and a click pins the label. Recolour by `n_hits`,
+   `-log10(tail_q)`, `log2(enrichment)`, `MSRI`, `stouffer`, or any samplesheet
+   column. A numeric column uses a continuous ramp. Categories that differ only
+   by case share one colour, and blank, `NULL`, `null`, `NA`, `N/A`, and
+   `none` share the missing colour. Pin top N labels the samples with the most
+   minor-intron hits. Samplesheet columns colour a point. They do not move it.
+2. **Highest-ranking samples.** A switch lists the top samples by largest
+   `n_hits`, largest `n_hits_control`, smallest `tail_q`, or largest
+   `enrichment`. Ties break on Stouffer, high first. Under the switch, two
+   canvases match `score_distribution.png`: rank by `n_hits`, and
+   `n_hits` against `n_hits_control` with a dashed line at equal counts.
+3. **Most retained introns.** One heatmap at a time, switched among the top
+   samples by `n_hits`, by `n_hits_control`, and by smallest `tail_q`. Colour
+   is that minor intron's robust z minus the median robust z of the same
+   sample's U2 control introns, from −6 to +6. Every measurable minor intron
+   is a column. The page scrolls sideways.
+4. **Shared minor-intron genes.** An UpSet plot for each group that has two or
+   more people. A gene counts when one of its minor introns is a hit and the
+   U2 introns paired to that intron are not. **minor spliceopathy** includes
+   any `minor_spliceopathy` value other than a placeholder (`blank`, `0`,
+   `control`, `N/A`, `NA`, `NULL` / `null` / a missing cell, `none`) or a
+   negative (`false`, `no`, `non-MS`). `Yes` and `yes` are the same value, and
+   so are `MS` and `ms`. **Diagnosis** is one group per `diagnosis` value other
+   than those placeholders, including labels other than `RNU4ATAC`, `RNU12`,
+   and `RNU6ATAC`. Values that differ only by case are one group and one
+   button. A group of one person is a gene list, not a plot.
+5. **Build an UpSet plot.** The same comparison for samples you pick. The menu
+   shows diagnosis and spliceopathy status. The group buttons fill that
+   selection. Two or more names draw the plot. One name lists that person's genes.
+6. **Top events.** The 60 minor-intron hits with the highest `z` in the cohort.
+   `z` is `z_cov`, `z_j`, or `z_comb` for the hit mode in use. Control-intron
+   hits are not rows. Check `n_EI_donor` and `n_EI_acceptor`: intronic coverage
+   without reads that cross the splice boundary is more likely an overlapping
+   transcript or a mapping artefact than retention.
+7. **Quality control.** Three canvases, the same panels as `qc.png`: median
+   exonic depth, fraction of targets measurable, and control-intron background.
+   When more than one run is present, a table gives the median and maximum
+   `n_hits` per run.
+8. **Parameters.** Every config key. Analyse rows are the values used for this
+   report. `min_mapq`, `min_overhang`, `keep_duplicates`, `library`, and
+   `engine` are read back from the count files.
 
 | file | contents |
 |---|---|
-| `results/report.html` | self-contained report, interactive PCA first |
-| `results/sample_scores.tsv` | one row per sample, ranked |
-| `results/hits.tsv.gz` | detailed rows for called introns only |
-| `results/pca_coordinates.tsv` | PC1…PC6 + scores per sample (for your own plots) |
-| `results/pca_loadings.tsv` | per-intron weights: which genes drive each axis |
-| `results/pca_variance.tsv` | variance explained per component |
+| `results/report.html` | The report above. Figures are embedded. |
+| `results/samplesheet.tsv` | The sample list used for that run. |
+| `results/sample_mapped_PCA_minor_introns/` | `pca_<colour>.png` for each score and samplesheet column, plus `pca_coordinates.tsv`, `pca_variance.tsv`, `pca_loadings.tsv` |
+| `results/samples_ranked_minor_introns/` | `sample_scores.tsv`, `hits.tsv.gz`, `score_distribution.png`; `n_hits/rank_<colour>.png`; `n_hits_vs_n_hits_control/scatter_<colour>.png` |
+| `results/most_retained_minor_introns/` | `heatmap_n_hits.png`, `heatmap_n_hits_control.png`, `heatmap_tail_q.png` |
+| `results/shared_minor_intron_genes/` | `upset_<group>.png`, `upset_shared_genes.tsv`, and `singleton_minor_hit_genes.tsv` when a group has one person |
+| `results/quality_control/` | `qc.png`, plus one PNG per colour under `median_exonic_depth/`, `frac_targets_meas/`, and `intronic_background/` |
 | `results/counts/*.tsv.gz` | raw per-sample counts — **this is the cache, do not delete** |
+
+`results/` here is the `outdir` in the config. Tables no longer sit next to
+`report.html`. `sample_scores.tsv`, the hit table, and the PCA tables are in
+the directories above.
 
 ### Reading the results
 
-1. **Quality control first.** A sample with low exonic depth, or an intronic
-   background far above the rest, deserves caution — that is a library problem,
-   not necessarily a splicing one.
-2. **Check the run panel.** If runs separate, you have a batch effect. `tail_q`
-   is largely immune to it since it calibrates within each sample.
-3. **Then the PCA and the scores.** An affected sample sits to the right on PC1,
-   with `tail_q < 0.05`, an enrichment of several tens, and `n_hits` far above
-   its own `n_hits_control`.
-4. **Then the events**, to know which genes to look at. Check that
-   `n_EI_donor` / `n_EI_acceptor` (reads crossing each boundary) are non-zero:
-   intronic coverage without boundary-crossing reads points to an overlapping
-   transcript or a mapping artefact rather than true retention.
+1. **Quality control first** (section 7). A sample with low exonic depth, or an
+   intronic background far above the rest, deserves caution. That is a library
+   problem, not necessarily a splicing one. If runs separate, you have a batch
+   effect. `tail_q` is largely immune to it, because it calibrates within each
+   sample.
+2. **Then the sample map and the rankings** (sections 1 and 2). An affected
+   sample sits to the right on PC1, with `tail_q < 0.05`, an enrichment of
+   several tens, and `n_hits` far above its own `n_hits_control`. Points above
+   the dashed line on the scatter have more minor hits than control hits.
+3. **Then the heatmaps** (section 3). Red is a minor intron retained above the
+   cohort and above that sample's own control introns. A sample whose ordinary
+   introns are also retained moves toward white.
+4. **Then the shared genes** (sections 4 and 5), to see which genes are
+   retained in the same people, and **the top events** (section 6), to see the
+   individual introns. Check that `n_EI_donor` / `n_EI_acceptor` are non-zero.
 
 Per-intron calls are **much less reliable than the aggregate**. Treat them as
 candidates to confirm (IGV, then RT-PCR).
@@ -356,19 +443,42 @@ tests/
   simulate_junction.py   synthetic cohort with known truth; compares hit modes
 ```
 
-Want to try other aggregation statistics? Start from `hits.tsv.gz` and
-`pca_coordinates.tsv` rather than touching the counting step.
+Want to try other aggregation statistics? Start from
+`samples_ranked_minor_introns/hits.tsv.gz` and
+`sample_mapped_PCA_minor_introns/pca_coordinates.tsv` rather than touching the
+counting step.
 
 ## Changes
 
+## Changes
+
+
 **1.1.0**
-- Junction ratio and `--hit-mode {coverage,junction,combined,both}`. Default
-  unchanged (`coverage`); existing counts caches work as is.
+- Default `--hit-mode` is `combined` (out of  `{coverage,junction,combined,both}`).
 - **Fix:** strandedness auto-detection never ran. It selected probe introns
-  with `kind == "u12"` while the target table says `"minor"`, got none, and
-  fell back to `unstranded` for every sample, so antisense reads were never
-  filtered. Stranded cohorts quantified with 1.0.0 should be re-run with
-  `quantify --force` (the cache does not know about this change).
+ with `kind == "u12"` while the target table says `"minor"`, got none, and
+ fell back to `unstranded` for every sample, so antisense reads were never
+ filtered. Stranded cohorts quantified with 1.0.0 should be re-run with
+ `quantify --force` (the cache does not know about this change).
+- A PIPELINE_GUIDE.PDF (under the “docs” folder) was added that explains the
+ stats in the pipeline, as well as the different ways to submit the pipeline,
+ and the pipeline outputs
+- Slurm compatible submit script added that calls a `config.yaml` file. The pipeline
+can still run without this script. The `config.yaml` allows the user to specify
+`bam_dir` (with a list of all directories with bams to be analyzed) or a `samplesheet`,
+which the user can manually edit to contain the `run`, as well as additional info,
+such as `diagnosis` and `minor_spliceopathy` status
+- The `results.html` file and output images were optimized to include colors from
+the additional columns in the `samplesheet` (such as `tissue`, `diagnosis` and
+`minor_spliceopathy` status), allow individual sample ids to be searched and table
+order to be toggled, etc.
+- Top Events in the html report has been changed to include the top 60 hits, with no 
+max hits per sample or alphabetical ordering. 
+- A Shared minor-intron genes figuer has been added. It contains upset plots between 
+minor spliceopathy samples, as well as lists of shared diagnoses from the 
+`minor_spliceopathy` and `diagnosis` columns in the `samplesheet`
+-A Build an UpSet Plot figure was created that allows the user to create upset plots 
+(and obtain shared gene lists) of any samples selected in a drop down menu
 
 ## License
 
