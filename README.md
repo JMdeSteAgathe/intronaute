@@ -48,6 +48,8 @@ intronaute prepare --introns examples/example_introns.bed \
 
 # 2. find the BAMs -> samplesheet.tsv  (one or many folders)
 intronaute discover --bam-dir /data/run1/BAM /data/run2/BAM
+#    or pick only some BAMs by name (quote the pattern)
+intronaute discover --bam-files '/path/20*_RNASEQ/nmd/*PUROMOINS*.bam'
 
 # 3. count (parallel, cached, resumable)
 intronaute quantify --workers 8
