@@ -480,6 +480,10 @@ minor spliceopathy samples, as well as lists of shared diagnoses from the
 -A Build an UpSet Plot figure was created that allows the user to create upset plots 
 (and obtain shared gene lists) of any samples selected in a drop down menu
 
+## Acknowledgements
+
+The intron list attached has been gracefully shared by Alexia Rabec (alexia.rabec@inserm.fr), Marion Delous (marion.delous@inserm.fr) and Sylvie Mazoyer (sylvie.mazoyer@inserm.fr). It was obtained using two tools: Tyler Alioto’s scoring matrices and script, originally developed for the generation of U12db (Alioto, 2007, PMID: 17082203), and intronIC v1.4.0 developped by Rick Padgett's team (Moyer et al., 2020, PMID: 32484558).
+
 ## License
 
 MIT.
