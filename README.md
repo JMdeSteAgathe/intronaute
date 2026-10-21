@@ -452,8 +452,6 @@ counting step.
 
 ## Changes
 
-## Changes
-
 
 **1.1.0**
 - Default `--hit-mode` is `combined` (out of  `{coverage,junction,combined,both}`).
