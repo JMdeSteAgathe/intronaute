@@ -132,9 +132,11 @@ def cmd_discover(a) -> None:
 
     from . import bamio
 
-    dirs = getattr(a, "bam_dir", None)
-    if not dirs:
-        raise SystemExit("--bam-dir is required (on the command line or in --config)")
+    dirs = getattr(a, "bam_dir", None) or []
+    patterns = getattr(a, "bam_files", None) or []
+    if not dirs and not patterns:
+        raise SystemExit("--bam-dir or --bam-files is required "
+                         "(on the command line or in --config)")
     rows = []
     for d in dirs:
         run = run_name(d)
@@ -152,6 +154,27 @@ def cmd_discover(a) -> None:
                                  size_GB=round(os.path.getsize(p) / 1e9, 2)))
                 found += 1
         _p(f"  {found:>5} BAM   run={run}")
+    
+    if patterns:  # --bam-files: explicit BAM paths or glob patterns
+        import glob
+        seen = {os.path.abspath(r["bam"]) for r in rows}
+        found = 0
+        for pat in patterns:
+            hits = [h for h in sorted(glob.glob(pat))
+                    if h.lower().endswith(".bam") and os.path.isfile(h)]
+            if not hits:
+                _p(f"[warn] no BAM matches: {pat}")
+            for p in hits:
+                if os.path.abspath(p) in seen:
+                    continue
+                seen.add(os.path.abspath(p))
+                parent = os.path.dirname(os.path.abspath(p))
+                run = run_name(re.sub(r"[\\/]pipeline[^\\/]*", "", parent))
+                rows.append(dict(sample=sample_name(p), bam=p, run=run,
+                                 has_index=int(bamio.has_index(p)),
+                                 size_GB=round(os.path.getsize(p) / 1e9, 2)))
+                found += 1
+        _p(f"  {found:>5} BAM   from --bam-files")
 
     if not rows:
         raise SystemExit("No BAM found. Check the paths and your access rights.")
@@ -936,6 +959,8 @@ def build_parser() -> argparse.ArgumentParser:
     sp = sub.add_parser("discover", help="scan BAM folders")
     common(sp)
     sp.add_argument("--bam-dir", nargs="+")
+    sp.add_argument("--bam-files", nargs="+",
+                    help="BAM files or quoted glob patterns, e.g. '/x/*PUROMOINS*.bam'")
     sp.set_defaults(func=cmd_discover)
 
     sp = sub.add_parser("quantify", help="count in the BAMs")
